@@ -48,7 +48,7 @@ function App() {
         <Routes>
           {/* Public Routes */}
           <Route element={<PublicLayout />}>
-            <Route path="/" element={<AdmissionForm />} />
+            <Route path="/" element={<Navigate to="/admin/login" replace />} />
             <Route path="/admission" element={<AdmissionForm />} />
             <Route path="/thank-you" element={<ThankYou />} />
             <Route path="/admin/login" element={<AdminLogin />} />
