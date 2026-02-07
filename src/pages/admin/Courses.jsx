@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { courseAPI, institutionAPI, adminAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 import CustomFieldInput from '../../components/CustomFieldInput';
+import SearchableSelect from '../../components/SearchableSelect';
+import SearchableMultiSelect from '../../components/SearchableMultiSelect';
+import { DEGREE_TO_COURSES, DURATION_OPTIONS, ELIGIBILITY_OPTIONS } from '../../constants/degreeCourses';
+
+const DEGREE_OPTIONS = [
+  'B.E', 'B.Tech', 'B.Sc', 'B.Com', 'B.A', 'BBA', 'BCA', 'B.Pharm', 'B.Arch', 'BDS', 'MBBS',
+  'M.E', 'M.Tech', 'M.Sc', 'M.Com', 'M.A', 'MBA', 'MCA', 'M.Pharm', 'M.Arch', 'MDS', 'MD', 'MS',
+  'Ph.D', 'Diploma', 'PG Diploma', 'Integrated B.Tech-M.Tech', 'Integrated B.Sc-M.Sc'
+];
 
 // Normalize institution display name so variants show consistently
 function normalizeInstitutionDisplayName(name) {
@@ -22,6 +31,7 @@ const AdminCourses = () => {
   const [formData, setFormData] = useState({
     name: '',
     code: '',
+    degree: '',
     description: '',
     institution: '',
     duration: '',
@@ -150,7 +160,7 @@ const AdminCourses = () => {
   const handleAddNew = () => {
     setEditingCourse(null);
     setFormData({
-      name: '', code: '', description: '', institution: '', duration: '', eligibility: '', isActive: true,
+      name: '', code: '', degree: '', description: '', institution: '', duration: '', eligibility: '', isActive: true,
       board: '', standardRange: '', stream: '', seats: '', admissionsOpen: true, customData: {},
     });
     setShowModal(true);
@@ -165,6 +175,7 @@ const AdminCourses = () => {
     setFormData({
       name: course.name || '',
       code: course.code || '',
+      degree: course.degree || '',
       description: course.description || '',
       institution: institutionId || course.institutionId || '',
       duration: course.duration || '',
@@ -230,6 +241,10 @@ const AdminCourses = () => {
         toast.error('Course name is required');
         return;
       }
+      if (!(formData.degree && formData.degree.trim())) {
+        toast.error('Degree is required');
+        return;
+      }
       if (isCourseFieldVisible('description') && isCourseFieldRequired('description') && !(formData.description && formData.description.trim())) {
         toast.error('Description is required');
         return;
@@ -276,7 +291,7 @@ const AdminCourses = () => {
       setShowModal(false);
       setEditingCourse(null);
       setFormData({
-        name: '', code: '', description: '', institution: '', duration: '', eligibility: '', isActive: true, customData: {},
+        name: '', code: '', degree: '', description: '', institution: '', duration: '', eligibility: '', isActive: true, customData: {},
         board: '', standardRange: '', stream: '', seats: '', admissionsOpen: true,
       });
       fetchCourses();
@@ -297,7 +312,7 @@ const AdminCourses = () => {
     setShowModal(false);
     setEditingCourse(null);
     setFormData({
-      name: '', code: '', description: '', institution: '', duration: '', eligibility: '', isActive: true,
+      name: '', code: '', degree: '', description: '', institution: '', duration: '', eligibility: '', isActive: true,
       board: '', standardRange: '', stream: '', seats: '', admissionsOpen: true, customData: {},
     });
   };
@@ -436,7 +451,8 @@ const AdminCourses = () => {
                             ) : (
                               <>
                                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Course Name</th>
-                                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Degree / Duration</th>
+                                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Degree</th>
+                                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Duration</th>
                                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Seats</th>
                                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Admissions Open</th>
                                 <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
@@ -471,7 +487,8 @@ const AdminCourses = () => {
                                     <div className="font-medium text-gray-900">{course.name}</div>
                                     {course.description && <div className="text-sm text-gray-500 mt-0.5 line-clamp-1">{course.description}</div>}
                                   </td>
-                                  <td className="py-3 px-4 text-sm text-gray-600">{course.duration || course.code || '—'}</td>
+                                  <td className="py-3 px-4 text-sm text-gray-600">{course.degree || '—'}</td>
+                                  <td className="py-3 px-4 text-sm text-gray-600">{course.duration || '—'}</td>
                                   <td className="py-3 px-4 text-sm text-gray-700">{course.seats != null ? course.seats : '—'}</td>
                                   <td className="py-3 px-4">
                                     {(() => {
@@ -601,18 +618,47 @@ const AdminCourses = () => {
                   </>
                 ) : (
                   <>
-                    {isCourseFieldVisible('name') && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Degree <span className="text-red-500">*</span></label>
+                        <SearchableSelect
+                          value={formData.degree}
+                          onChange={(v) => setFormData((prev) => {
+                            const baseCourses = DEGREE_TO_COURSES[v] || [];
+                            const keepName = v && prev.name && baseCourses.includes(prev.name);
+                            return { ...prev, degree: v, name: keepName ? prev.name : '' };
+                          })}
+                          options={[...new Set([...(formData.degree && !DEGREE_OPTIONS.includes(formData.degree) ? [formData.degree] : []), ...DEGREE_OPTIONS])]}
+                          placeholder="Search or select degree..."
+                          className="input-field"
+                          required
+                        />
+                      </div>
+                      {isCourseFieldVisible('name') && (
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Course Name {isCourseFieldRequired('name') && <span className="text-red-500">*</span>}</label>
-                          <input type="text" name="name" value={formData.name} onChange={handleInputChange} className="input-field" required={isCourseFieldRequired('name')} />
+                          <SearchableSelect
+                            value={formData.name}
+                            onChange={(v) => setFormData((prev) => ({ ...prev, name: v }))}
+                            options={(() => {
+                              const base = DEGREE_TO_COURSES[formData.degree] || [];
+                              if (formData.name && !base.includes(formData.name)) return [formData.name, ...base];
+                              return base;
+                            })()}
+                            placeholder={formData.degree ? 'Search or select course...' : 'Select degree first'}
+                            className={`input-field ${!formData.degree ? 'cursor-not-allowed bg-gray-50 opacity-75' : ''}`}
+                            required={isCourseFieldRequired('name')}
+                            disabled={!formData.degree}
+                            allowCustom
+                          />
+                          {!formData.degree && <p className="text-xs text-amber-600 mt-0.5">Select a degree to see course options</p>}
                         </div>
-                        {isCourseFieldVisible('code') && (
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Course Code {isCourseFieldRequired('code') && <span className="text-red-500">*</span>}</label>
-                            <input type="text" name="code" value={formData.code} onChange={handleInputChange} className="input-field" required={isCourseFieldRequired('code')} />
-                          </div>
-                        )}
+                      )}
+                    </div>
+                    {isCourseFieldVisible('code') && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Course Code {isCourseFieldRequired('code') && <span className="text-red-500">*</span>}</label>
+                        <input type="text" name="code" value={formData.code} onChange={handleInputChange} className="input-field" required={isCourseFieldRequired('code')} />
                       </div>
                     )}
                     {isCourseFieldVisible('description') && (
@@ -624,14 +670,34 @@ const AdminCourses = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {isCourseFieldVisible('duration') && (
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Duration / Degree {isCourseFieldRequired('duration') && <span className="text-red-500">*</span>}</label>
-                          <input type="text" name="duration" value={formData.duration} onChange={handleInputChange} className="input-field" placeholder="e.g., 4 years" required={isCourseFieldRequired('duration')} />
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Duration {isCourseFieldRequired('duration') && <span className="text-red-500">*</span>}</label>
+                          <SearchableSelect
+                            value={formData.duration}
+                            onChange={(v) => setFormData((prev) => ({ ...prev, duration: v }))}
+                            options={formData.duration && !DURATION_OPTIONS.includes(formData.duration) ? [formData.duration, ...DURATION_OPTIONS] : DURATION_OPTIONS}
+                            placeholder="Select or type duration..."
+                            className="input-field"
+                            required={isCourseFieldRequired('duration')}
+                            allowCustom
+                          />
                         </div>
                       )}
                       {isCourseFieldVisible('eligibility') && (
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Eligibility {isCourseFieldRequired('eligibility') && <span className="text-red-500">*</span>}</label>
-                          <input type="text" name="eligibility" value={formData.eligibility} onChange={handleInputChange} className="input-field" placeholder="e.g., 12th Pass" required={isCourseFieldRequired('eligibility')} />
+                          <SearchableMultiSelect
+                            value={formData.eligibility}
+                            onChange={(v) => setFormData((prev) => ({ ...prev, eligibility: v }))}
+                            options={(() => {
+                              const base = ELIGIBILITY_OPTIONS;
+                              const current = (formData.eligibility || '').split(',').map((s) => s.trim()).filter(Boolean);
+                              const extra = current.filter((c) => !base.includes(c));
+                              return [...new Set([...extra, ...base])];
+                            })()}
+                            placeholder="Select or type eligibility (multiple)..."
+                            required={isCourseFieldRequired('eligibility')}
+                            allowCustom
+                          />
                         </div>
                       )}
                     </div>

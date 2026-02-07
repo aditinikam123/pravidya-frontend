@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { institutionAPI, adminAPI } from '../../services/api';
 import toast from 'react-hot-toast';
+import { fetchLocationByPincode } from '../../utils/pincodeLookup';
 import { BoardGradeSelector, defaultBoardGradeMapValue, hasAnyGrade } from '../../components/BoardGradeSelector';
 import CustomFieldInput from '../../components/CustomFieldInput';
 
@@ -23,6 +24,7 @@ const CreateInstitution = () => {
     name: '',
     type: 'College',
     address: '',
+    pincode: '',
     city: '',
     state: '',
     isActive: true,
@@ -36,16 +38,41 @@ const CreateInstitution = () => {
     boardGradeMap: defaultBoardGradeMap(),
     customData: {},
   });
-  const [institutionFields, setInstitutionFields] = useState({ customFields: [] });
+  const [institutionFields, setInstitutionFields] = useState({ customFields: [], requiredFields: {} });
+
+  const isInstitutionFieldVisible = (key) => institutionFields[key] !== false;
+  const isInstitutionFieldRequired = (key) =>
+    ['name', 'type'].includes(key) || institutionFields.requiredFields?.[key] === true;
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
+  const fetchSettings = () => {
     adminAPI.getSettings().then((res) => {
       const d = res.data?.data?.institutionFields;
-      if (d?.customFields) setInstitutionFields((prev) => ({ ...prev, customFields: d.customFields }));
+      if (d) {
+        const rf = d && typeof d.requiredFields === 'object' ? d.requiredFields : {};
+        setInstitutionFields((prev) => ({
+          ...prev,
+          ...d,
+          customFields: d.customFields || prev.customFields,
+          requiredFields: { ...(prev.requiredFields || {}), ...rf },
+        }));
+      }
     }).catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchSettings();
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') fetchSettings(); };
+    const onSettingsUpdated = () => fetchSettings();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('settings-updated', onSettingsUpdated);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('settings-updated', onSettingsUpdated);
+    };
   }, []);
   const [validationErrors, setValidationErrors] = useState({ boards: '', grades: '' });
+  const [locationOptions, setLocationOptions] = useState({ cities: [], states: [], loading: false });
 
   const isSchool = formData.type === 'School';
   const boardGradeMap = formData.boardGradeMap && typeof formData.boardGradeMap === 'object' ? formData.boardGradeMap : defaultBoardGradeMap();
@@ -103,6 +130,35 @@ const CreateInstitution = () => {
     });
   };
 
+  const handlePincodeChange = (e) => {
+    const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+    setFormData((prev) => ({ ...prev, pincode: v }));
+  };
+
+  const handlePincodeLookup = async () => {
+    const pin = (formData?.pincode ?? '').toString().trim();
+    if (!pin || pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+      toast.error('Enter a valid 6-digit pincode');
+      return;
+    }
+    setLocationOptions((prev) => ({ ...prev, loading: true }));
+    const { cities, states, error } = await fetchLocationByPincode(pin);
+    setLocationOptions({ cities, states, loading: false });
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    setFormData((prev) => {
+      const next = { ...prev };
+      if (states.length === 1) next.state = states[0];
+      if (cities.length === 1) next.city = cities[0];
+      return next;
+    });
+    if (cities.length > 0 || states.length > 0) {
+      toast.success('Location loaded from pincode');
+    }
+  };
+
   const updateBoardGrades = (board, value) => {
     setFormData(prev => {
       const map = { ...(prev.boardGradeMap && typeof prev.boardGradeMap === 'object' ? prev.boardGradeMap : {}) };
@@ -150,9 +206,23 @@ const CreateInstitution = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.name || !formData.type) {
-      toast.error('Please fill all required fields');
-      return;
+    if (isInstitutionFieldVisible('name') && isInstitutionFieldRequired('name') && !formData.name?.trim()) {
+      toast.error('Institution name is required'); return;
+    }
+    if (isInstitutionFieldVisible('type') && isInstitutionFieldRequired('type') && !formData.type) {
+      toast.error('Type is required'); return;
+    }
+    if (isInstitutionFieldVisible('logoUrl') && isInstitutionFieldRequired('logoUrl') && !formData.logoUrl?.trim()) {
+      toast.error('Logo is required'); return;
+    }
+    if (isInstitutionFieldVisible('address') && isInstitutionFieldRequired('address') && !formData.address?.trim()) {
+      toast.error('Address is required'); return;
+    }
+    if (isInstitutionFieldVisible('city') && isInstitutionFieldRequired('city') && !formData.city?.trim()) {
+      toast.error('City is required'); return;
+    }
+    if (isInstitutionFieldVisible('state') && isInstitutionFieldRequired('state') && !formData.state?.trim()) {
+      toast.error('State is required'); return;
     }
     const payload = { ...formData };
     if (Object.keys(formData.customData || {}).length > 0) {
@@ -161,13 +231,18 @@ const CreateInstitution = () => {
     if (formData.type === 'School') {
       const map = formData.boardGradeMap && typeof formData.boardGradeMap === 'object' ? formData.boardGradeMap : {};
       const boards = Object.keys(map).filter((b) => b);
-      if (boards.length === 0) {
+      if (isInstitutionFieldRequired('boardsOffered') && boards.length === 0) {
         setValidationErrors(prev => ({ ...prev, boards: 'Select at least one board.' }));
         return;
       }
       const boardWithoutGrades = boards.find((b) => !hasAnyGrade(map[b]));
       if (boardWithoutGrades) {
         setValidationErrors(prev => ({ ...prev, grades: `Select at least one grade for ${boardWithoutGrades}.` }));
+        return;
+      }
+      const hasSeniorSecondary = boards.some((b) => (map[b]?.high || []).length > 0);
+      if (hasSeniorSecondary && isInstitutionFieldVisible('streamsOffered') && isInstitutionFieldRequired('streamsOffered') && (!formData.streamsOffered || formData.streamsOffered.length === 0)) {
+        toast.error('Select at least one stream for 11–12');
         return;
       }
       setValidationErrors({ boards: '', grades: '' });
@@ -253,8 +328,9 @@ const CreateInstitution = () => {
             </div>
           </div>
 
+          {isInstitutionFieldVisible('logoUrl') && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Logo {isInstitutionFieldRequired('logoUrl') && <span className="text-red-500">*</span>}</label>
             <input
               type="text"
               name="logoUrl"
@@ -273,6 +349,7 @@ const CreateInstitution = () => {
               }}
               placeholder="https://example.com/logo.png"
               className="input-field"
+              required={isInstitutionFieldRequired('logoUrl')}
             />
             <p className="text-xs text-gray-500 mt-1">Paste a direct link to the logo image, or upload below.</p>
             <p className="text-xs text-gray-500">Recommended size: 256×256. Max file size: {MAX_LOGO_FILE_SIZE_LABEL}. Larger images are auto-resized.</p>
@@ -305,11 +382,12 @@ const CreateInstitution = () => {
               </div>
             )}
           </div>
+          )}
 
           {isSchool && (
             <>
               <div className="space-y-4">
-                <p className="text-sm font-medium text-gray-700">Select board(s)</p>
+                <p className="text-sm font-medium text-gray-700">Select board(s) {isInstitutionFieldRequired('boardsOffered') && <span className="text-red-500">*</span>}</p>
                 <div className="flex flex-wrap gap-2">
                   {BOARD_OPTIONS.map((opt) => (
                     <label key={opt} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
@@ -329,7 +407,7 @@ const CreateInstitution = () => {
               </div>
               {hasSeniorSecondary && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">🔬 Streams (for 11–12)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">🔬 Streams (for 11–12) {isInstitutionFieldRequired('streamsOffered') && <span className="text-red-500">*</span>}</label>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {STREAM_OPTIONS.map((opt) => (
                       <label key={opt} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
@@ -343,28 +421,81 @@ const CreateInstitution = () => {
             </>
           )}
 
+          {isInstitutionFieldVisible('pincode') && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
-            <input type="text" name="address" value={formData.address} onChange={handleInputChange} className="input-field" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Pin Code {isInstitutionFieldRequired('pincode') && <span className="text-red-500">*</span>}</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                name="pincode"
+                value={formData.pincode}
+                onChange={handlePincodeChange}
+                className="input-field flex-1 min-w-0"
+                placeholder="e.g., 560001"
+                maxLength={6}
+                required={isInstitutionFieldRequired('pincode')}
+              />
+              <button
+                type="button"
+                onClick={handlePincodeLookup}
+                disabled={locationOptions.loading || !formData?.pincode || formData.pincode.length !== 6}
+                className="btn-secondary shrink-0 px-4"
+              >
+                {locationOptions.loading ? 'Looking up...' : 'Lookup'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-0.5">Enter 6-digit pincode and click Lookup to fill City and State</p>
           </div>
+          )}
+
+          {isInstitutionFieldVisible('address') && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Address {isInstitutionFieldRequired('address') && <span className="text-red-500">*</span>}</label>
+            <input type="text" name="address" value={formData.address} onChange={handleInputChange} className="input-field" required={isInstitutionFieldRequired('address')} />
+          </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {isInstitutionFieldVisible('city') && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-              <input type="text" name="city" value={formData.city} onChange={handleInputChange} className="input-field" />
+              <label className="block text-sm font-medium text-gray-700 mb-1">City {isInstitutionFieldRequired('city') && <span className="text-red-500">*</span>}</label>
+              {locationOptions.cities.length > 0 ? (
+                <select name="city" value={formData.city} onChange={handleInputChange} className="input-field" required={isInstitutionFieldRequired('city')}>
+                  <option value="">Select City</option>
+                  {[...new Set([...(formData.city ? [formData.city] : []), ...locationOptions.cities])].map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              ) : (
+                <input type="text" name="city" value={formData.city} onChange={handleInputChange} className="input-field" placeholder="Enter pincode first or type manually" required={isInstitutionFieldRequired('city')} />
+              )}
             </div>
+            )}
+            {isInstitutionFieldVisible('state') && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
-              <input type="text" name="state" value={formData.state} onChange={handleInputChange} className="input-field" />
+              <label className="block text-sm font-medium text-gray-700 mb-1">State {isInstitutionFieldRequired('state') && <span className="text-red-500">*</span>}</label>
+              {locationOptions.states.length > 0 ? (
+                <select name="state" value={formData.state} onChange={handleInputChange} className="input-field" required={isInstitutionFieldRequired('state')}>
+                  <option value="">Select State</option>
+                  {[...new Set([...(formData.state ? [formData.state] : []), ...locationOptions.states])].map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              ) : (
+                <input type="text" name="state" value={formData.state} onChange={handleInputChange} className="input-field" placeholder="Enter pincode first or type manually" required={isInstitutionFieldRequired('state')} />
+              )}
             </div>
+            )}
           </div>
 
+          {isInstitutionFieldVisible('isActive') && (
           <div>
             <label className="flex items-center gap-2">
               <input type="checkbox" name="isActive" checked={formData.isActive} onChange={handleInputChange} className="rounded" />
               <span className="text-sm font-medium text-gray-700">Active</span>
             </label>
           </div>
+          )}
 
           {(institutionFields.customFields || []).length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

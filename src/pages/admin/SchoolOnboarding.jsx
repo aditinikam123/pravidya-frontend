@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { schoolAPI } from '../../services/api';
+import { schoolAPI, adminAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 
 const SchoolOnboarding = () => {
@@ -8,6 +8,11 @@ const SchoolOnboarding = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingSchool, setEditingSchool] = useState(null);
   const [currentStep, setCurrentStep] = useState(1);
+  const [schoolFields, setSchoolFields] = useState({ customFields: [], requiredFields: {} });
+
+  const isSchoolFieldVisible = (key) => schoolFields[key] !== false;
+  const isSchoolFieldRequired = (key) =>
+    ['name'].includes(key) || schoolFields.requiredFields?.[key] === true;
   const [formData, setFormData] = useState({
     name: '',
     board: 'CBSE',
@@ -24,6 +29,33 @@ const SchoolOnboarding = () => {
 
   useEffect(() => {
     fetchSchools();
+  }, []);
+
+  const fetchSettings = () => {
+    adminAPI.getSettings().then((res) => {
+      const d = res.data?.data?.schoolFields;
+      if (d) {
+        const rf = d && typeof d.requiredFields === 'object' ? d.requiredFields : {};
+        setSchoolFields((prev) => ({
+          ...prev,
+          ...d,
+          customFields: d.customFields || prev.customFields,
+          requiredFields: { ...(prev.requiredFields || {}), ...rf },
+        }));
+      }
+    }).catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchSettings();
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') fetchSettings(); };
+    const onSettingsUpdated = () => fetchSettings();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('settings-updated', onSettingsUpdated);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('settings-updated', onSettingsUpdated);
+    };
   }, []);
 
   const fetchSchools = async () => {
@@ -127,10 +159,24 @@ const SchoolOnboarding = () => {
       return;
     }
 
-    // Validate required fields
-    if (!formData.name || !formData.board || !formData.city || !formData.state || !formData.academicYear) {
-      toast.error('Please fill all required fields');
-      return;
+    // Validate required fields based on schoolFields settings
+    if (isSchoolFieldVisible('name') && isSchoolFieldRequired('name') && !formData.name?.trim()) {
+      toast.error('School name is required'); return;
+    }
+    if (isSchoolFieldVisible('boards') && isSchoolFieldRequired('boards') && !formData.board?.trim()) {
+      toast.error('Board is required'); return;
+    }
+    if (isSchoolFieldVisible('city') && isSchoolFieldRequired('city') && !formData.city?.trim()) {
+      toast.error('City is required'); return;
+    }
+    if (isSchoolFieldVisible('state') && isSchoolFieldRequired('state') && !formData.state?.trim()) {
+      toast.error('State is required'); return;
+    }
+    if (isSchoolFieldVisible('address') && isSchoolFieldRequired('address') && !formData.address?.trim()) {
+      toast.error('Address is required'); return;
+    }
+    if (!formData.academicYear?.trim()) {
+      toast.error('Academic year is required'); return;
     }
 
     setSubmitting(true);
@@ -318,25 +364,25 @@ const SchoolOnboarding = () => {
                 <div className="space-y-4">
                   <h3 className="font-semibold text-lg mb-4">Basic Information</h3>
                   <div>
-                    <label className="block text-sm font-medium mb-1">School Name *</label>
+                    <label className="block text-sm font-medium mb-1">School Name {isSchoolFieldRequired('name') && <span className="text-red-500">*</span>}</label>
                     <input
                       type="text"
                       name="name"
                       value={formData.name}
                       onChange={handleInputChange}
                       className="input-field"
-                      required
+                      required={isSchoolFieldRequired('name')}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium mb-1">Board *</label>
+                      <label className="block text-sm font-medium mb-1">Board {isSchoolFieldRequired('boards') && <span className="text-red-500">*</span>}</label>
                       <select
                         name="board"
                         value={formData.board}
                         onChange={handleInputChange}
                         className="input-field"
-                        required
+                        required={isSchoolFieldRequired('boards')}
                       >
                         <option value="CBSE">CBSE</option>
                         <option value="ICSE">ICSE</option>
@@ -366,36 +412,37 @@ const SchoolOnboarding = () => {
                   <h3 className="font-semibold text-lg mb-4">Location & Contact</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium mb-1">City *</label>
+                      <label className="block text-sm font-medium mb-1">City {isSchoolFieldRequired('city') && <span className="text-red-500">*</span>}</label>
                       <input
                         type="text"
                         name="city"
                         value={formData.city}
                         onChange={handleInputChange}
                         className="input-field"
-                        required
+                        required={isSchoolFieldRequired('city')}
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">State *</label>
+                      <label className="block text-sm font-medium mb-1">State {isSchoolFieldRequired('state') && <span className="text-red-500">*</span>}</label>
                       <input
                         type="text"
                         name="state"
                         value={formData.state}
                         onChange={handleInputChange}
                         className="input-field"
-                        required
+                        required={isSchoolFieldRequired('state')}
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-1">Address</label>
+                    <label className="block text-sm font-medium mb-1">Address {isSchoolFieldRequired('address') && <span className="text-red-500">*</span>}</label>
                     <textarea
                       name="address"
                       value={formData.address}
                       onChange={handleInputChange}
                       className="input-field"
                       rows="3"
+                      required={isSchoolFieldRequired('address')}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">

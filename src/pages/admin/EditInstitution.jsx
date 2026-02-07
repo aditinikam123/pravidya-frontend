@@ -2,12 +2,22 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { institutionAPI, courseAPI, adminAPI } from '../../services/api';
 import toast from 'react-hot-toast';
+import { fetchLocationByPincode } from '../../utils/pincodeLookup';
 import { BoardGradeSelector, defaultBoardGradeMapValue, hasAnyGrade } from '../../components/BoardGradeSelector';
 import CustomFieldInput from '../../components/CustomFieldInput';
+import SearchableSelect from '../../components/SearchableSelect';
+import SearchableMultiSelect from '../../components/SearchableMultiSelect';
+import { DEGREE_TO_COURSES, DURATION_OPTIONS, ELIGIBILITY_OPTIONS } from '../../constants/degreeCourses';
 
 const BOARD_OPTIONS = ['CBSE', 'ICSE', 'State Board', 'IB', 'IGCSE'];
 const STANDARD_RANGES = ['1-5', '6-10', '11-12'];
 const STREAM_OPTIONS = ['Science', 'Commerce', 'Arts'];
+
+const DEGREE_OPTIONS = [
+  'B.E', 'B.Tech', 'B.Sc', 'B.Com', 'B.A', 'BBA', 'BCA', 'B.Pharm', 'B.Arch', 'BDS', 'MBBS',
+  'M.E', 'M.Tech', 'M.Sc', 'M.Com', 'M.A', 'MBA', 'MCA', 'M.Pharm', 'M.Arch', 'MDS', 'MD', 'MS',
+  'Ph.D', 'Diploma', 'PG Diploma', 'Integrated B.Tech-M.Tech', 'Integrated B.Sc-M.Sc'
+];
 
 const defaultBoardsByStandard = () => ({ '1-5': [], '6-10': [], '11-12': [] });
 const defaultAdmissionsOpenByStandard = () => ({ '1-5': true, '6-10': true, '11-12': true });
@@ -30,7 +40,18 @@ const EditInstitution = () => {
   const [courseForm, setCourseForm] = useState({ name: '', code: '', description: '', duration: '', eligibility: '', isActive: true });
   const [courseSubmitting, setCourseSubmitting] = useState(false);
   const [deletingCourse, setDeletingCourse] = useState(null);
-  const [institutionFields, setInstitutionFields] = useState({ customFields: [] });
+  const [viewingCourse, setViewingCourse] = useState(null);
+  const [institutionFields, setInstitutionFields] = useState({ customFields: [], requiredFields: {} });
+
+  const isInstitutionFieldVisible = (key) => institutionFields[key] !== false;
+  const isInstitutionFieldRequired = (key) =>
+    ['name', 'type'].includes(key) || institutionFields.requiredFields?.[key] === true;
+  const [courseFields, setCourseFields] = useState({ customFields: [], requiredFields: {} });
+  const [locationOptions, setLocationOptions] = useState({ cities: [], states: [], loading: false });
+
+  const isCourseFieldVisible = (key) => courseFields[key] !== false;
+  const isCourseFieldRequired = (key) =>
+    ['name', 'degree'].includes(key) || courseFields.requiredFields?.[key] === true;
 
   const isSchool = formData?.type === 'School';
   const boardGradeMap = formData?.boardGradeMap && typeof formData.boardGradeMap === 'object' ? formData.boardGradeMap : defaultBoardGradeMap();
@@ -41,11 +62,34 @@ const EditInstitution = () => {
     if (id) fetchInstitution();
   }, [id]);
 
-  useEffect(() => {
+  const fetchSettings = () => {
     adminAPI.getSettings().then((res) => {
-      const d = res.data?.data?.institutionFields;
-      if (d?.customFields) setInstitutionFields((prev) => ({ ...prev, customFields: d.customFields }));
+      const data = res.data?.data || {};
+      const inst = data.institutionFields;
+      if (inst) {
+        const rf = inst && typeof inst.requiredFields === 'object' ? inst.requiredFields : {};
+        setInstitutionFields((prev) => ({
+          ...prev,
+          ...inst,
+          customFields: inst.customFields || prev.customFields,
+          requiredFields: { ...(prev.requiredFields || {}), ...rf },
+        }));
+      }
+      const course = data.courseFields;
+      if (course) setCourseFields((prev) => ({ ...prev, ...course, customFields: course.customFields || prev.customFields }));
     }).catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchSettings();
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') fetchSettings(); };
+    const onSettingsUpdated = () => fetchSettings();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('settings-updated', onSettingsUpdated);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('settings-updated', onSettingsUpdated);
+    };
   }, []);
 
   const fetchInstitution = async () => {
@@ -98,6 +142,7 @@ const EditInstitution = () => {
       name: institution.name || '',
       type: institution.type || 'College',
       address: institution.address || '',
+      pincode: institution.pincode || '',
       city: institution.city || '',
       state: institution.state || '',
       isActive: institution.isActive !== undefined ? institution.isActive : true,
@@ -123,6 +168,35 @@ const EditInstitution = () => {
       const next = checked ? [...current, option] : current.filter((o) => o !== option);
       return { ...prev, customData: { ...prev.customData, [key]: next } };
     });
+  };
+
+  const handlePincodeChange = (e) => {
+    const v = e.target.value.replace(/\D/g, '').slice(0, 6);
+    setFormData((prev) => ({ ...prev, pincode: v }));
+  };
+
+  const handlePincodeLookup = async () => {
+    const pin = (formData?.pincode ?? '').toString().trim();
+    if (!pin || pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+      toast.error('Enter a valid 6-digit pincode');
+      return;
+    }
+    setLocationOptions((prev) => ({ ...prev, loading: true }));
+    const { cities, states, error } = await fetchLocationByPincode(pin);
+    setLocationOptions({ cities, states, loading: false });
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    setFormData((prev) => {
+      const next = { ...prev };
+      if (states.length === 1) next.state = states[0];
+      if (cities.length === 1) next.city = cities[0];
+      return next;
+    });
+    if (cities.length > 0 || states.length > 0) {
+      toast.success('Location loaded from pincode');
+    }
   };
 
   const handleInputChange = (e) => {
@@ -196,15 +270,38 @@ const EditInstitution = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.name || !formData.type) { toast.error('Please fill all required fields'); return; }
+    if (isInstitutionFieldVisible('name') && isInstitutionFieldRequired('name') && !formData.name?.trim()) {
+      toast.error('Institution name is required'); return;
+    }
+    if (isInstitutionFieldVisible('type') && isInstitutionFieldRequired('type') && !formData.type) {
+      toast.error('Type is required'); return;
+    }
+    if (isInstitutionFieldVisible('logoUrl') && isInstitutionFieldRequired('logoUrl') && !formData.logoUrl?.trim()) {
+      toast.error('Logo is required'); return;
+    }
+    if (isInstitutionFieldVisible('address') && isInstitutionFieldRequired('address') && !formData.address?.trim()) {
+      toast.error('Address is required'); return;
+    }
+    if (isInstitutionFieldVisible('city') && isInstitutionFieldRequired('city') && !formData.city?.trim()) {
+      toast.error('City is required'); return;
+    }
+    if (isInstitutionFieldVisible('state') && isInstitutionFieldRequired('state') && !formData.state?.trim()) {
+      toast.error('State is required'); return;
+    }
     const payload = { ...formData };
     if (formData.type === 'School') {
       const map = formData.boardGradeMap && typeof formData.boardGradeMap === 'object' ? formData.boardGradeMap : {};
       const boards = Object.keys(map).filter((b) => b);
-      if (boards.length === 0) { setValidationErrors(prev => ({ ...prev, boards: 'Select at least one board.' })); return; }
+      if (isInstitutionFieldRequired('boardsOffered') && boards.length === 0) {
+        setValidationErrors(prev => ({ ...prev, boards: 'Select at least one board.' })); return;
+      }
       const boardWithoutGrades = boards.find((b) => !hasAnyGrade(map[b]));
       if (boardWithoutGrades) { setValidationErrors(prev => ({ ...prev, grades: `Select at least one grade for ${boardWithoutGrades}.` })); return; }
       setValidationErrors({ boards: '', grades: '' });
+      const hasSeniorSecondary = boards.some((b) => (map[b]?.high || []).length > 0);
+      if (hasSeniorSecondary && isInstitutionFieldVisible('streamsOffered') && isInstitutionFieldRequired('streamsOffered') && (!formData.streamsOffered || formData.streamsOffered.length === 0)) {
+        toast.error('Select at least one stream for 11–12'); return;
+      }
       payload.boardGradeMap = map;
       payload.boardsOffered = boards;
       const standardsSet = new Set();
@@ -240,7 +337,7 @@ const EditInstitution = () => {
 
   const handleAddCourse = () => {
     setEditingCourseId(null);
-    setCourseForm({ name: '', code: '', description: '', duration: '', eligibility: '', isActive: true });
+    setCourseForm({ name: '', code: '', degree: '', description: '', duration: '', eligibility: '', isActive: true });
     setShowCourseForm(true);
   };
 
@@ -249,6 +346,7 @@ const EditInstitution = () => {
     setCourseForm({
       name: course.name || '',
       code: course.code || '',
+      degree: course.degree || '',
       description: course.description || '',
       duration: course.duration || '',
       eligibility: course.eligibility || '',
@@ -257,9 +355,32 @@ const EditInstitution = () => {
     setShowCourseForm(true);
   };
 
+  const courseOptionsByDegree = (degree) => {
+    if (!degree) return [];
+    const base = DEGREE_TO_COURSES[degree] || [];
+    const currentName = courseForm?.name;
+    if (currentName && !base.includes(currentName)) return [currentName, ...base];
+    return base;
+  };
+
   const handleCourseSubmit = async (e) => {
     e.preventDefault();
-    if (!courseForm.name?.trim()) { toast.error('Course name is required'); return; }
+    if (isCourseFieldVisible('name') && isCourseFieldRequired('name') && !courseForm.name?.trim()) {
+      toast.error('Course name is required'); return;
+    }
+    if (!courseForm.degree?.trim()) { toast.error('Degree is required'); return; }
+    if (isCourseFieldVisible('code') && isCourseFieldRequired('code') && !courseForm.code?.trim()) {
+      toast.error('Course code is required'); return;
+    }
+    if (isCourseFieldVisible('description') && isCourseFieldRequired('description') && !courseForm.description?.trim()) {
+      toast.error('Description is required'); return;
+    }
+    if (isCourseFieldVisible('duration') && isCourseFieldRequired('duration') && !courseForm.duration?.trim()) {
+      toast.error('Duration is required'); return;
+    }
+    if (isCourseFieldVisible('eligibility') && isCourseFieldRequired('eligibility') && !courseForm.eligibility?.trim()) {
+      toast.error('Eligibility is required'); return;
+    }
     setCourseSubmitting(true);
     try {
       if (editingCourseId) {
@@ -331,8 +452,9 @@ const EditInstitution = () => {
               </div>
             </div>
 
+            {isInstitutionFieldVisible('logoUrl') && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Logo {isInstitutionFieldRequired('logoUrl') && <span className="text-red-500">*</span>}</label>
               <input
                 type="text"
                 name="logoUrl"
@@ -351,6 +473,7 @@ const EditInstitution = () => {
                 }}
                 placeholder="https://example.com/logo.png"
                 className="input-field"
+                required={isInstitutionFieldRequired('logoUrl')}
               />
               <p className="text-xs text-gray-500 mt-1">Paste a direct link or upload below. Max {MAX_LOGO_FILE_SIZE_LABEL}.</p>
               <div className="mt-2 flex items-center gap-3">
@@ -367,11 +490,12 @@ const EditInstitution = () => {
                 )}
               </div>
             </div>
+            )}
 
             {isSchool && (
               <>
                 <div className="space-y-4">
-                  <p className="text-sm font-medium text-gray-700">Select board(s)</p>
+                  <p className="text-sm font-medium text-gray-700">Select board(s) {isInstitutionFieldRequired('boardsOffered') && <span className="text-red-500">*</span>}</p>
                   <div className="flex flex-wrap gap-2">
                     {BOARD_OPTIONS.map((opt) => (
                       <label key={opt} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
@@ -391,7 +515,7 @@ const EditInstitution = () => {
                 </div>
                 {hasSeniorSecondary && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">🔬 Streams (for 11–12)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">🔬 Streams (for 11–12) {isInstitutionFieldRequired('streamsOffered') && <span className="text-red-500">*</span>}</label>
                     <div className="flex flex-wrap gap-2 mt-1">
                       {STREAM_OPTIONS.map((opt) => (
                         <label key={opt} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer">
@@ -405,28 +529,81 @@ const EditInstitution = () => {
               </>
             )}
 
+            {isInstitutionFieldVisible('pincode') && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
-              <input type="text" name="address" value={formData.address} onChange={handleInputChange} className="input-field" />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pin Code {isInstitutionFieldRequired('pincode') && <span className="text-red-500">*</span>}</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  name="pincode"
+                  value={formData.pincode}
+                  onChange={handlePincodeChange}
+                  className="input-field flex-1 min-w-0"
+                  placeholder="e.g., 560001"
+                  maxLength={6}
+                  required={isInstitutionFieldRequired('pincode')}
+                />
+                <button
+                  type="button"
+                  onClick={handlePincodeLookup}
+                  disabled={locationOptions.loading || !formData?.pincode || formData.pincode.length !== 6}
+                  className="btn-secondary shrink-0 px-4"
+                >
+                  {locationOptions.loading ? 'Looking up...' : 'Lookup'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">Enter 6-digit pincode and click Lookup to fill City and State</p>
             </div>
+            )}
+
+            {isInstitutionFieldVisible('address') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Address {isInstitutionFieldRequired('address') && <span className="text-red-500">*</span>}</label>
+              <input type="text" name="address" value={formData.address} onChange={handleInputChange} className="input-field" required={isInstitutionFieldRequired('address')} />
+            </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {isInstitutionFieldVisible('city') && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                <input type="text" name="city" value={formData.city} onChange={handleInputChange} className="input-field" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">City {isInstitutionFieldRequired('city') && <span className="text-red-500">*</span>}</label>
+                {locationOptions.cities.length > 0 ? (
+                  <select name="city" value={formData.city} onChange={handleInputChange} className="input-field" required={isInstitutionFieldRequired('city')}>
+                    <option value="">Select City</option>
+                    {[...new Set([...(formData.city ? [formData.city] : []), ...locationOptions.cities])].map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" name="city" value={formData.city} onChange={handleInputChange} className="input-field" placeholder="Enter pincode first or type manually" required={isInstitutionFieldRequired('city')} />
+                )}
               </div>
+              )}
+              {isInstitutionFieldVisible('state') && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
-                <input type="text" name="state" value={formData.state} onChange={handleInputChange} className="input-field" />
+                <label className="block text-sm font-medium text-gray-700 mb-1">State {isInstitutionFieldRequired('state') && <span className="text-red-500">*</span>}</label>
+                {locationOptions.states.length > 0 ? (
+                  <select name="state" value={formData.state} onChange={handleInputChange} className="input-field" required={isInstitutionFieldRequired('state')}>
+                    <option value="">Select State</option>
+                    {[...new Set([...(formData.state ? [formData.state] : []), ...locationOptions.states])].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" name="state" value={formData.state} onChange={handleInputChange} className="input-field" placeholder="Enter pincode first or type manually" required={isInstitutionFieldRequired('state')} />
+                )}
               </div>
+              )}
             </div>
 
+            {isInstitutionFieldVisible('isActive') && (
             <div>
               <label className="flex items-center gap-2">
                 <input type="checkbox" name="isActive" checked={formData.isActive} onChange={handleInputChange} className="rounded" />
                 <span className="text-sm font-medium text-gray-700">Active</span>
               </label>
             </div>
+            )}
 
             {(institutionFields.customFields || []).length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -464,27 +641,80 @@ const EditInstitution = () => {
                 <h3 className="font-medium text-gray-800">{editingCourseId ? 'Edit Course' : 'Add New Course'}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Degree <span className="text-red-500">*</span></label>
+                    <SearchableSelect
+                      value={courseForm.degree}
+                      onChange={(v) => setCourseForm((prev) => {
+                        const baseCourses = DEGREE_TO_COURSES[v] || [];
+                        const keepName = v && prev.name && baseCourses.includes(prev.name);
+                        return { ...prev, degree: v, name: keepName ? prev.name : '' };
+                      })}
+                      options={[...new Set([...(courseForm.degree && !DEGREE_OPTIONS.includes(courseForm.degree) ? [courseForm.degree] : []), ...DEGREE_OPTIONS])]}
+                      placeholder="Search or select degree..."
+                      className="input-field"
+                      required
+                    />
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Course Name <span className="text-red-500">*</span></label>
-                    <input type="text" value={courseForm.name} onChange={(e) => setCourseForm(prev => ({ ...prev, name: e.target.value }))} className="input-field" required />
+                    <SearchableSelect
+                      value={courseForm.name}
+                      onChange={(v) => setCourseForm((prev) => ({ ...prev, name: v }))}
+                      options={courseOptionsByDegree(courseForm.degree)}
+                      placeholder={courseForm.degree ? 'Search or select course...' : 'Select degree first'}
+                      className={`input-field ${!courseForm.degree ? 'cursor-not-allowed bg-gray-50 opacity-75' : ''}`}
+                      required
+                      disabled={!courseForm.degree}
+                      allowCustom
+                    />
+                    {!courseForm.degree && <p className="text-xs text-amber-600 mt-0.5">Select a degree to see course options</p>}
                   </div>
+                </div>
+                {isCourseFieldVisible('code') && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Course Code</label>
-                    <input type="text" value={courseForm.code} onChange={(e) => setCourseForm(prev => ({ ...prev, code: e.target.value }))} className="input-field" />
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Course Code {isCourseFieldRequired('code') && <span className="text-red-500">*</span>}</label>
+                    <input type="text" value={courseForm.code} onChange={(e) => setCourseForm(prev => ({ ...prev, code: e.target.value }))} className="input-field" required={isCourseFieldRequired('code')} />
                   </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <textarea value={courseForm.description} onChange={(e) => setCourseForm(prev => ({ ...prev, description: e.target.value }))} className="input-field" rows={2} />
-                </div>
+                )}
+                {isCourseFieldVisible('description') && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description {isCourseFieldRequired('description') && <span className="text-red-500">*</span>}</label>
+                    <textarea value={courseForm.description} onChange={(e) => setCourseForm(prev => ({ ...prev, description: e.target.value }))} className="input-field" rows={2} required={isCourseFieldRequired('description')} />
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
-                    <input type="text" value={courseForm.duration} onChange={(e) => setCourseForm(prev => ({ ...prev, duration: e.target.value }))} className="input-field" placeholder="e.g., 4 years" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Eligibility</label>
-                    <input type="text" value={courseForm.eligibility} onChange={(e) => setCourseForm(prev => ({ ...prev, eligibility: e.target.value }))} className="input-field" placeholder="e.g., 12th Pass" />
-                  </div>
+                  {isCourseFieldVisible('duration') && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Duration {isCourseFieldRequired('duration') && <span className="text-red-500">*</span>}</label>
+                      <SearchableSelect
+                        value={courseForm.duration}
+                        onChange={(v) => setCourseForm((prev) => ({ ...prev, duration: v }))}
+                        options={courseForm.duration && !DURATION_OPTIONS.includes(courseForm.duration) ? [courseForm.duration, ...DURATION_OPTIONS] : DURATION_OPTIONS}
+                        placeholder="Select or type duration..."
+                        className="input-field"
+                        required={isCourseFieldRequired('duration')}
+                        allowCustom
+                      />
+                    </div>
+                  )}
+                  {isCourseFieldVisible('eligibility') && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Eligibility {isCourseFieldRequired('eligibility') && <span className="text-red-500">*</span>}</label>
+                      <SearchableMultiSelect
+                        value={courseForm.eligibility}
+                        onChange={(v) => setCourseForm((prev) => ({ ...prev, eligibility: v }))}
+                        options={(() => {
+                          const base = ELIGIBILITY_OPTIONS;
+                          const current = (courseForm.eligibility || '').split(',').map((s) => s.trim()).filter(Boolean);
+                          const extra = current.filter((c) => !base.includes(c));
+                          return [...new Set([...extra, ...base])];
+                        })()}
+                        placeholder="Select or type eligibility (multiple)..."
+                        required={isCourseFieldRequired('eligibility')}
+                        allowCustom
+                      />
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="flex items-center gap-2">
@@ -507,6 +737,7 @@ const EditInstitution = () => {
                   <thead className="bg-gray-50">
                     <tr className="border-b border-gray-200">
                       <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Course Name</th>
+                      <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Degree</th>
                       <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Code</th>
                       <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Duration</th>
                       <th className="text-left py-3 px-4 text-xs font-semibold text-gray-600 uppercase">Status</th>
@@ -520,6 +751,7 @@ const EditInstitution = () => {
                           <div className="font-medium text-gray-900">{course.name}</div>
                           {course.description && <div className="text-sm text-gray-500 line-clamp-1">{course.description}</div>}
                         </td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{course.degree || '—'}</td>
                         <td className="py-3 px-4 text-sm text-gray-600">{course.code || '—'}</td>
                         <td className="py-3 px-4 text-sm text-gray-600">{course.duration || '—'}</td>
                         <td className="py-3 px-4">
@@ -528,6 +760,9 @@ const EditInstitution = () => {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right">
+                          <button onClick={() => setViewingCourse(course)} className="p-2 rounded-lg text-gray-600 hover:bg-gray-100" title="View">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                          </button>
                           <button onClick={() => handleEditCourse(course)} className="p-2 rounded-lg text-blue-600 hover:bg-blue-50" title="Edit">✏️</button>
                           <button onClick={() => setDeletingCourse(course)} className="p-2 rounded-lg text-red-600 hover:bg-red-50" title="Delete">🗑</button>
                         </td>
@@ -540,6 +775,62 @@ const EditInstitution = () => {
           </div>
         )}
       </div>
+
+      {viewingCourse && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Course Details</h2>
+              <button onClick={() => setViewingCourse(null)} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <dl className="space-y-3">
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Course Name</dt>
+                <dd className="mt-0.5 text-gray-900 font-medium">{viewingCourse.name}</dd>
+              </div>
+              {viewingCourse.description && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Description</dt>
+                  <dd className="mt-0.5 text-gray-700">{viewingCourse.description}</dd>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Degree</dt>
+                  <dd className="mt-0.5 text-gray-900">{viewingCourse.degree || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Code</dt>
+                  <dd className="mt-0.5 text-gray-900">{viewingCourse.code || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Duration</dt>
+                  <dd className="mt-0.5 text-gray-900">{viewingCourse.duration || '—'}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Status</dt>
+                  <dd className="mt-0.5">
+                    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium ${viewingCourse.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                      {viewingCourse.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </dd>
+                </div>
+              </div>
+              {viewingCourse.eligibility && (
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Eligibility</dt>
+                  <dd className="mt-0.5 text-gray-900">{viewingCourse.eligibility}</dd>
+                </div>
+              )}
+            </dl>
+            <div className="mt-6 flex justify-end">
+              <button onClick={() => setViewingCourse(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deletingCourse && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

@@ -30,11 +30,12 @@ const FORM_CONFIGS = {
       name: 'Name',
       type: 'Type (School/College)',
       address: 'Address',
+      pincode: 'Pincode',
       city: 'City',
       state: 'State',
       isActive: 'Active Status',
       logoUrl: 'Logo',
-      boardsOffered: 'Boards Offered',
+      boardsOffered: 'Select board(s)',
       standardsAvailable: 'Standards Available',
       streamsOffered: 'Streams Offered',
       admissionsOpen: 'Admissions Open',
@@ -77,7 +78,7 @@ const FORM_CONFIGS = {
       name: 'Institution Name',
       type: 'Type (School/College)',
       logo: 'Logo',
-      boards: 'Boards',
+      boards: 'Select board(s)',
       address: 'Address',
       city: 'City',
       state: 'State',
@@ -121,7 +122,7 @@ const getDefaultRequiredFields = (config) => {
 
 const defaultState = () => ({
   counselorFields: { username: true, email: true, password: true, fullName: true, mobile: true, expertise: true, languages: true, availability: true, maxCapacity: true, schoolId: true, customFields: [], requiredFields: getDefaultRequiredFields(FORM_CONFIGS.counselorFields) },
-  institutionFields: { name: true, type: true, address: true, city: true, state: true, isActive: true, logoUrl: true, boardsOffered: true, standardsAvailable: true, streamsOffered: true, admissionsOpen: true, boardGradeMap: true, customFields: [], requiredFields: getDefaultRequiredFields(FORM_CONFIGS.institutionFields) },
+  institutionFields: { name: true, type: true, address: true, pincode: true, city: true, state: true, isActive: true, logoUrl: true, boardsOffered: true, standardsAvailable: true, streamsOffered: true, admissionsOpen: true, boardGradeMap: true, customFields: [], requiredFields: getDefaultRequiredFields(FORM_CONFIGS.institutionFields) },
   courseFields: { name: true, code: true, description: true, duration: true, eligibility: true, isActive: true, customFields: [], requiredFields: getDefaultRequiredFields(FORM_CONFIGS.courseFields) },
   schoolCourseFields: { board: true, standardRange: true, stream: true, seats: true, admissionsOpen: true, customFields: [], requiredFields: getDefaultRequiredFields(FORM_CONFIGS.schoolCourseFields) },
   schoolFields: { name: true, type: true, logo: true, boards: true, address: true, city: true, state: true, active: true, customFields: [], requiredFields: getDefaultRequiredFields(FORM_CONFIGS.schoolFields) },
@@ -131,6 +132,7 @@ const defaultState = () => ({
 const AdminSettings = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingFormKey, setSavingFormKey] = useState(null);
   const [expanded, setExpanded] = useState({ counselorFields: true, courseFields: true, schoolCourseFields: true });
   const [activeTab, setActiveTab] = useState('customizeForm');
   const [trinityExpanded, setTrinityExpanded] = useState(true);
@@ -332,6 +334,7 @@ const AdminSettings = () => {
       }
       await adminAPI.updateSettings(toSave);
       setFormFields(toSave);
+      window.dispatchEvent(new CustomEvent('settings-updated'));
       toast.success('Settings saved successfully');
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Failed to save settings');
@@ -342,6 +345,55 @@ const AdminSettings = () => {
 
   const toggleSection = (key) => {
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const prepareSectionForSave = (formKey, data) => {
+    if (formKey === 'counselorFields') {
+      const whenShownAlways = FORM_CONFIGS.counselorFields?.requiredWhenShownAlways || [];
+      if (whenShownAlways.length > 0 && data.requiredFields) {
+        const rf = { ...data.requiredFields };
+        whenShownAlways.forEach((fk) => { rf[fk] = true; });
+        return { ...data, requiredFields: rf };
+      }
+    }
+    if (formKey === 'courseFields') {
+      const { institution, stream, seats, admissionsOpen, ...rest } = data;
+      const rf = rest.requiredFields || {};
+      delete rf.institution;
+      delete rf.stream;
+      delete rf.seats;
+      delete rf.admissionsOpen;
+      return { ...rest, requiredFields: rf };
+    }
+    if (formKey === 'schoolFields') {
+      const { academicYear, contactEmail, contactPhone, capacity, pockets, board, ...rest } = data;
+      const rf = rest.requiredFields || {};
+      delete rf.academicYear;
+      delete rf.contactEmail;
+      delete rf.contactPhone;
+      delete rf.capacity;
+      delete rf.pockets;
+      delete rf.board;
+      return { ...rest, requiredFields: rf };
+    }
+    return data;
+  };
+
+  const handleSaveSection = async (formKey) => {
+    const data = formFields[formKey];
+    if (!data) return;
+    setSavingFormKey(formKey);
+    try {
+      const prepared = prepareSectionForSave(formKey, data);
+      await adminAPI.updateSettings({ [formKey]: prepared });
+      setFormFields((prev) => ({ ...prev, [formKey]: prepared }));
+      window.dispatchEvent(new CustomEvent('settings-updated'));
+      toast.success(`${FORM_CONFIGS[formKey]?.title || formKey} saved`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to save');
+    } finally {
+      setSavingFormKey(null);
+    }
   };
 
   if (loading) {
@@ -373,8 +425,100 @@ const AdminSettings = () => {
           >
             Customize Form
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('help')}
+            className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'help'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Help
+          </button>
         </nav>
       </div>
+
+      {activeTab === 'help' && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-6 space-y-6">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 mb-2">How Settings Work</h2>
+              <p className="text-gray-600">
+                The Settings page lets you customize which fields appear on each form and whether they are required. Your changes apply across the platform as soon as you save.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Form sections</h3>
+              <p className="text-gray-600 mb-3">Each form has its own configuration section:</p>
+              <ul className="space-y-2 text-gray-600 list-disc list-inside">
+                <li><strong>Institution Form</strong> — Controls the Add New Institution and Edit Institution forms (Admin → Institutions). Used when creating or editing schools and colleges.</li>
+                <li><strong>College Course Form</strong> — Controls the Add/Edit Course form when adding college courses to an institution.</li>
+                <li><strong>Admission Enquiry Form (Public)</strong> — Controls the public admission enquiry form that visitors use to submit enquiries.</li>
+              </ul>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Visibility (main checkbox)</h3>
+              <p className="text-gray-600 mb-2">
+                Each field has a main checkbox that controls whether the field is <strong>shown</strong> on the form:
+              </p>
+              <ul className="space-y-1 text-gray-600 list-disc list-inside">
+                <li><strong>Checked</strong> — The field appears on the form.</li>
+                <li><strong>Unchecked</strong> — The field is hidden and will not appear on the form.</li>
+              </ul>
+              <p className="text-gray-500 text-sm mt-2">Fields marked &quot;(always on)&quot; cannot be hidden and will always appear.</p>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Required when shown</h3>
+              <p className="text-gray-600 mb-2">
+                When a field is visible, you can mark it as required:
+              </p>
+              <ul className="space-y-1 text-gray-600 list-disc list-inside">
+                <li><strong>Checked</strong> — Users must fill this field before submitting the form. A red asterisk (*) appears next to the field label.</li>
+                <li><strong>Unchecked</strong> — The field is optional and can be left blank.</li>
+              </ul>
+              <p className="text-gray-500 text-sm mt-2">This option only appears when the field is visible. Required when shown applies only when the field is shown.</p>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Saving changes</h3>
+              <p className="text-gray-600 mb-2">
+                After changing any setting:
+              </p>
+              <ol className="space-y-1 text-gray-600 list-decimal list-inside">
+                <li>Click <strong>Save All Settings</strong> at the bottom of the page.</li>
+                <li>Wait for the success message.</li>
+                <li>Forms will automatically pick up the new settings when you open or refresh them.</li>
+              </ol>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Where settings apply</h3>
+              <table className="min-w-full text-sm text-gray-600 border border-gray-200 rounded-lg overflow-hidden">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-3 font-medium text-gray-800">Setting</th>
+                    <th className="text-left p-3 font-medium text-gray-800">Applies to</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-gray-200"><td className="p-3">Institution Form</td><td className="p-3">Add New Institution, Edit Institution (schools &amp; colleges)</td></tr>
+                  <tr className="border-t border-gray-200"><td className="p-3">College Course Form</td><td className="p-3">Add/Edit Course (inside Edit Institution when type is College)</td></tr>
+                  <tr className="border-t border-gray-200"><td className="p-3">Admission Enquiry Form</td><td className="p-3">Public admission enquiry form (visitor-facing)</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bg-primary-50/50 rounded-lg p-4 border border-primary-100">
+              <p className="text-sm text-primary-800 font-medium">Need help?</p>
+              <p className="text-sm text-primary-700 mt-1">Settings are stored and shared across all users. Changes take effect immediately after saving. If a form does not reflect your changes, refresh the page or navigate away and back.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'customizeForm' && (
         <div className="space-y-6">
@@ -504,6 +648,16 @@ const AdminSettings = () => {
                 >
                   <span className="text-lg leading-none">+</span>
                   Add field
+                </button>
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-200 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleSaveSection(formKey)}
+                  disabled={savingFormKey === formKey}
+                  className="btn-primary text-sm py-2 px-4"
+                >
+                  {savingFormKey === formKey ? 'Saving...' : 'Save'}
                 </button>
               </div>
               {formKey === 'courseFields' && (
